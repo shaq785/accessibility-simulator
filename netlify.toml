@@ -4,15 +4,18 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  NETLIFY = "true"
 
 # Next.js plugin handles all the routing
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# Increase function timeout for the analysis endpoint
+# Function configuration
 [functions]
   node_bundler = "esbuild"
+  included_files = ["node_modules/@sparticuz/chromium/**"]
   
-# External node modules that need special handling
+# External node modules that need special handling  
 [functions."*"]
-  external_node_modules = ["@sparticuz/chromium"]
+  external_node_modules = ["@sparticuz/chromium", "puppeteer-core"]
+  memory = 1024

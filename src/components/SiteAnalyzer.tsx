@@ -28,16 +28,37 @@ export function SiteAnalyzer({ onAnalysisComplete }: SiteAnalyzerProps) {
         body: JSON.stringify({ url: url.trim() }),
       });
 
+      // Handle non-OK responses
+      if (!response.ok) {
+        let errorMessage = `Server error (${response.status})`;
+        try {
+          const errorData = await response.json();
+          if (errorData?.error) {
+            errorMessage = errorData.error;
+          }
+        } catch {
+          // Response wasn't JSON, use status text
+          errorMessage = `Analysis failed: ${response.statusText || 'Server error'}`;
+        }
+        setError(errorMessage);
+        onAnalysisComplete?.(null);
+        return;
+      }
+
       const data = await response.json();
 
       if (isAnalysisError(data)) {
         setError(data.error);
         onAnalysisComplete?.(null);
-      } else {
+      } else if (data?.summary && data?.violations !== undefined) {
         setResult(data);
         onAnalysisComplete?.(data);
+      } else {
+        setError("Received invalid response from server. Please try again.");
+        onAnalysisComplete?.(null);
       }
-    } catch {
+    } catch (err) {
+      console.error("Analysis error:", err);
       setError("Failed to connect to the analysis service. Please try again.");
       onAnalysisComplete?.(null);
     } finally {

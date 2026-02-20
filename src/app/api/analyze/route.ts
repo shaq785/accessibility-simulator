@@ -3,8 +3,7 @@ import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
 import { AxePuppeteer } from "@axe-core/puppeteer";
 
-const PAGE_TIMEOUT = 30000; // 30 seconds for page load
-const AXE_TIMEOUT = 15000; // 15 seconds for axe analysis
+const PAGE_TIMEOUT = 20000; // 20 seconds for page load (reduced for serverless)
 
 function isValidUrl(urlString: string): boolean {
   try {
@@ -12,6 +11,43 @@ function isValidUrl(urlString: string): boolean {
     return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
+  }
+}
+
+async function getBrowser() {
+  const isProduction = process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY;
+  
+  if (isProduction) {
+    // Serverless environment (Netlify/AWS Lambda)
+    chromium.setHeadlessMode = true;
+    chromium.setGraphicsMode = false;
+    
+    return puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: { width: 1280, height: 720 },
+      executablePath: await chromium.executablePath(),
+      headless: true,
+    });
+  } else {
+    // Local development - use local Chrome
+    return puppeteer.launch({
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--ignore-certificate-errors",
+      ],
+      defaultViewport: { width: 1280, height: 720 },
+      executablePath: process.env.CHROME_PATH || (
+        process.platform === "win32" 
+          ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+          : process.platform === "darwin"
+            ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            : "/usr/bin/google-chrome"
+      ),
+      headless: true,
+    });
   }
 }
 
@@ -36,37 +72,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Configure for serverless (Netlify) or local development
-    const isProduction = process.env.NODE_ENV === "production";
-    
-    const extraArgs = [
-      "--ignore-certificate-errors",
-      "--disable-web-security", 
-      "--allow-running-insecure-content",
-    ];
-    
-    browser = await puppeteer.launch({
-      args: isProduction 
-        ? [...chromium.args, ...extraArgs]
-        : [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            ...extraArgs,
-          ],
-      defaultViewport: { width: 1280, height: 720 },
-      executablePath: isProduction 
-        ? await chromium.executablePath()
-        : process.env.CHROME_PATH || (
-            process.platform === "win32" 
-              ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-              : process.platform === "darwin"
-                ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-                : "/usr/bin/google-chrome"
-          ),
-      headless: true,
-    });
+    try {
+      browser = await getBrowser();
+    } catch (launchError) {
+      console.error("Browser launch error:", launchError);
+      return NextResponse.json(
+        { error: "Failed to initialize browser. Please try again." },
+        { status: 500 }
+      );
+    }
 
     const page = await browser.newPage();
     

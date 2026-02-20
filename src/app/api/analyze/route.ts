@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import { AxePuppeteer } from "@axe-core/puppeteer";
 
 const PAGE_TIMEOUT = 30000; // 30 seconds for page load
@@ -35,9 +36,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Configure for serverless (Netlify) or local development
+    const isProduction = process.env.NODE_ENV === "production";
+    
     browser = await puppeteer.launch({
-      headless: true,
-      args: [
+      args: isProduction ? chromium.args : [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
@@ -46,6 +49,17 @@ export async function POST(request: NextRequest) {
         "--disable-web-security",
         "--allow-running-insecure-content",
       ],
+      defaultViewport: chromium.defaultViewport,
+      executablePath: isProduction 
+        ? await chromium.executablePath()
+        : process.env.CHROME_PATH || (
+            process.platform === "win32" 
+              ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+              : process.platform === "darwin"
+                ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+                : "/usr/bin/google-chrome"
+          ),
+      headless: isProduction ? chromium.headless : true,
       ignoreHTTPSErrors: true,
     });
 

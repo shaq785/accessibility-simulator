@@ -1,0 +1,18 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Next.js plugin handles all the routing
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Increase function timeout for the analysis endpoint
+[functions]
+  node_bundler = "esbuild"
+  
+# External node modules that need special handling
+[functions."*"]
+  external_node_modules = ["@sparticuz/chromium"]

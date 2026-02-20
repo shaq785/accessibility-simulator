@@ -62,11 +62,15 @@ async function analyzeWithAxe(url: string) {
     );
 
     await page.goto(url, {
-      waitUntil: "domcontentloaded",
+      waitUntil: "load",
       timeout: PAGE_TIMEOUT,
     });
     
-    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1500)));
+    // Wait for body to be available and stable
+    await page.waitForSelector("body", { timeout: 5000 });
+    
+    // Additional wait for any dynamic content
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     const axeResults = await new AxePuppeteer(page)
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])

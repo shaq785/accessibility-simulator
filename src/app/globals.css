@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Tab focus highlight overlay */
+.tab-highlight-active *:focus {
+  outline: 3px solid #2563eb !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.3) !important;
+}
+
+/* Reading ruler styles */
+.reading-ruler {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 2rem;
+  background: rgba(255, 255, 0, 0.2);
+  border-top: 2px solid rgba(255, 200, 0, 0.6);
+  border-bottom: 2px solid rgba(255, 200, 0, 0.6);
+  pointer-events: none;
+  z-index: 9999;
+  transition: top 0.05s ease-out;
+}
+
+/* Lens filter classes */
+.lens-blur-mild { filter: blur(1px); }
+.lens-blur-moderate { filter: blur(2px); }
+.lens-blur-severe { filter: blur(3px); }
+.lens-contrast-low { filter: contrast(0.6); }
+.lens-contrast-high { filter: contrast(1.5); }
+
+/* Color blindness filters */
+.lens-protanopia { filter: url(#protanopia); }
+.lens-deuteranopia { filter: url(#deuteranopia); }
+.lens-tritanopia { filter: url(#tritanopia); }
+
+/* Typography adjustments */
+.lens-font-large { font-size: 125% !important; }
+.lens-font-xlarge { font-size: 150% !important; }
+.lens-line-height-relaxed { line-height: 1.8 !important; }
+.lens-line-height-loose { line-height: 2.2 !important; }
+
+/* Reduced motion */
+.lens-reduced-motion,
+.lens-reduced-motion * {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* Demo animations */
+@keyframes pulse-demo {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+@keyframes slide-demo {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(10px); }
+  100% { transform: translateX(0); }
+}
+.animate-pulse-demo { animation: pulse-demo 2s ease-in-out infinite; }
+.animate-slide-demo { animation: slide-demo 3s ease-in-out infinite; }

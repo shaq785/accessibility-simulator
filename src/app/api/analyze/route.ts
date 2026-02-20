@@ -39,17 +39,23 @@ export async function POST(request: NextRequest) {
     // Configure for serverless (Netlify) or local development
     const isProduction = process.env.NODE_ENV === "production";
     
+    const extraArgs = [
+      "--ignore-certificate-errors",
+      "--disable-web-security", 
+      "--allow-running-insecure-content",
+    ];
+    
     browser = await puppeteer.launch({
-      args: isProduction ? chromium.args : [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--ignore-certificate-errors",
-        "--disable-web-security",
-        "--allow-running-insecure-content",
-      ],
-      defaultViewport: chromium.defaultViewport,
+      args: isProduction 
+        ? [...chromium.args, ...extraArgs]
+        : [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            ...extraArgs,
+          ],
+      defaultViewport: { width: 1280, height: 720 },
       executablePath: isProduction 
         ? await chromium.executablePath()
         : process.env.CHROME_PATH || (
@@ -59,11 +65,13 @@ export async function POST(request: NextRequest) {
                 ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
                 : "/usr/bin/google-chrome"
           ),
-      headless: isProduction ? chromium.headless : true,
-      ignoreHTTPSErrors: true,
+      headless: true,
     });
 
     const page = await browser.newPage();
+    
+    // Set to ignore HTTPS errors
+    await page.setBypassCSP(true);
     
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"

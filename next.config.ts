@@ -3,12 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   
-  // Required for @sparticuz/chromium in serverless
-  experimental: {
-    serverComponentsExternalPackages: ["@sparticuz/chromium"],
-  },
-  
-  // Increase serverless function timeout
+  // Required for @sparticuz/chromium and puppeteer in serverless
   serverExternalPackages: ["@sparticuz/chromium", "puppeteer-core"],
 };
 

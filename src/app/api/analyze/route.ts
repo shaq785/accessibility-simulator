@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import puppeteer from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
-import { AxePuppeteer } from "@axe-core/puppeteer";
 import * as cheerio from "cheerio";
 
 const PAGE_TIMEOUT = 20000;
 const FETCH_TIMEOUT = 10000;
+
+// Check if we're in a serverless environment where Puppeteer won't work reliably
+const isServerless = !!(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL);
 
 function isValidUrl(urlString: string): boolean {
   try {
@@ -16,20 +16,17 @@ function isValidUrl(urlString: string): boolean {
   }
 }
 
-// ============ AXE-CORE ANALYSIS (Primary) ============
+// ============ AXE-CORE ANALYSIS (Primary - Local only) ============
 
-async function getBrowser() {
-  const isServerless = process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY;
+async function analyzeWithAxe(url: string) {
+  // Dynamically import puppeteer modules only when needed
+  const puppeteer = await import("puppeteer-core");
+  const { AxePuppeteer } = await import("@axe-core/puppeteer");
   
-  if (isServerless) {
-    return puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: { width: 1280, height: 720 },
-      executablePath: await chromium.executablePath(),
-      headless: true,
-    });
-  } else {
-    return puppeteer.launch({
+  let browser = null;
+  
+  try {
+    browser = await puppeteer.default.launch({
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -47,14 +44,7 @@ async function getBrowser() {
       ),
       headless: true,
     });
-  }
-}
 
-async function analyzeWithAxe(url: string) {
-  let browser = null;
-  
-  try {
-    browser = await getBrowser();
     const page = await browser.newPage();
     await page.setBypassCSP(true);
     await page.setUserAgent(
@@ -66,10 +56,7 @@ async function analyzeWithAxe(url: string) {
       timeout: PAGE_TIMEOUT,
     });
     
-    // Wait for body to be available and stable
     await page.waitForSelector("body", { timeout: 5000 });
-    
-    // Additional wait for any dynamic content
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     const axeResults = await new AxePuppeteer(page)
@@ -351,7 +338,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Try axe-core first (comprehensive)
+    // On serverless (Netlify), skip axe-core and use cheerio directly
+    if (isServerless) {
+      console.log("Serverless environment detected, using cheerio analysis");
+      try {
+        const result = await analyzeWithCheerio(url);
+        return NextResponse.json(result);
+      } catch (cheerioError) {
+        console.error("Cheerio analysis failed:", cheerioError);
+        const errorMessage = cheerioError instanceof Error ? cheerioError.message : "Unknown error";
+        return NextResponse.json(
+          { error: `Failed to analyze the page: ${errorMessage}` },
+          { status: 502 }
+        );
+      }
+    }
+
+    // Local development: Try axe-core first, fallback to cheerio
     try {
       console.log("Attempting axe-core analysis...");
       const result = await analyzeWithAxe(url);
@@ -361,7 +364,7 @@ export async function POST(request: NextRequest) {
       console.error("axe-core failed, falling back to cheerio:", axeError);
     }
 
-    // Fallback to cheerio (lightweight)
+    // Fallback to cheerio
     try {
       console.log("Attempting cheerio analysis...");
       const result = await analyzeWithCheerio(url);

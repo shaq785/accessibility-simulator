@@ -114,7 +114,6 @@ export function SiteAnalyzer({ onAnalysisComplete }: SiteAnalyzerProps) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
           </svg>
           <h2 className="font-semibold text-white">Site Analysis</h2>
-          <span className="text-xs text-slate-500">· Powered by axe-core</span>
         </div>
         <form onSubmit={(e) => { e.preventDefault(); handleAnalyze(); }} className="flex gap-2">
           <input
@@ -167,8 +166,16 @@ export function SiteAnalyzer({ onAnalysisComplete }: SiteAnalyzerProps) {
           <div className="flex items-center gap-3 flex-wrap">
             {getStatusBadge()}
             <span className="text-sm text-slate-400 truncate">{result.url}</span>
-            <span className="text-xs text-slate-500 ml-auto">{result.testEngine}</span>
+            <span className={`text-xs ml-auto px-2 py-0.5 rounded ${result.analysisMethod === "axe-core" ? "bg-indigo-500/20 text-indigo-400" : "bg-slate-600/50 text-slate-400"}`}>
+              {result.testEngine}
+            </span>
           </div>
+          
+          {result.analysisMethod === "cheerio" && (
+            <div className="bg-slate-700/50 rounded-lg p-3 text-xs text-slate-400">
+              <strong className="text-slate-300">Note:</strong> Using lightweight analysis. For comprehensive WCAG testing, try running locally or use a different hosting platform.
+            </div>
+          )}
 
           {/* Summary Grid */}
           <div className="grid grid-cols-5 gap-2 max-w-2xl">

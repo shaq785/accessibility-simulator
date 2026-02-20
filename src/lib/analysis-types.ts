@@ -28,6 +28,7 @@ export interface AnalysisResult {
   violations: AxeViolation[];
   passedRules: number;
   testEngine: string;
+  analysisMethod?: "axe-core" | "cheerio";
 }
 
 export interface AnalysisError {

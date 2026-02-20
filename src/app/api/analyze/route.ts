@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
 import { AxePuppeteer } from "@axe-core/puppeteer";
+import * as cheerio from "cheerio";
 
-const PAGE_TIMEOUT = 20000; // 20 seconds for page load (reduced for serverless)
+const PAGE_TIMEOUT = 20000;
+const FETCH_TIMEOUT = 10000;
 
 function isValidUrl(urlString: string): boolean {
   try {
@@ -14,14 +16,12 @@ function isValidUrl(urlString: string): boolean {
   }
 }
 
+// ============ AXE-CORE ANALYSIS (Primary) ============
+
 async function getBrowser() {
-  const isProduction = process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY;
+  const isServerless = process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY;
   
-  if (isProduction) {
-    // Serverless environment (Netlify/AWS Lambda)
-    chromium.setHeadlessMode = true;
-    chromium.setGraphicsMode = false;
-    
+  if (isServerless) {
     return puppeteer.launch({
       args: chromium.args,
       defaultViewport: { width: 1280, height: 720 },
@@ -29,7 +29,6 @@ async function getBrowser() {
       headless: true,
     });
   } else {
-    // Local development - use local Chrome
     return puppeteer.launch({
       args: [
         "--no-sandbox",
@@ -51,100 +50,27 @@ async function getBrowser() {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function analyzeWithAxe(url: string) {
   let browser = null;
-
+  
   try {
-    const body = await request.json();
-    const { url } = body;
-
-    if (!url || typeof url !== "string") {
-      return NextResponse.json(
-        { error: "URL is required" },
-        { status: 400 }
-      );
-    }
-
-    if (!isValidUrl(url)) {
-      return NextResponse.json(
-        { error: "Invalid URL format. Please provide a valid HTTP or HTTPS URL." },
-        { status: 400 }
-      );
-    }
-
-    try {
-      browser = await getBrowser();
-    } catch (launchError) {
-      console.error("Browser launch error:", launchError);
-      return NextResponse.json(
-        { error: "Failed to initialize browser. Please try again." },
-        { status: 500 }
-      );
-    }
-
+    browser = await getBrowser();
     const page = await browser.newPage();
-    
-    // Set to ignore HTTPS errors
     await page.setBypassCSP(true);
-    
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     );
 
-    await page.setViewport({ width: 1280, height: 720 });
-
-    await page.setExtraHTTPHeaders({
-      "Accept-Language": "en-US,en;q=0.9",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: PAGE_TIMEOUT,
     });
+    
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1500)));
 
-    try {
-      await page.goto(url, {
-        waitUntil: "domcontentloaded",
-        timeout: PAGE_TIMEOUT,
-      });
-      
-      // Wait a bit for dynamic content
-      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 2000)));
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Page load error:", errorMessage);
-      
-      if (errorMessage.includes("timeout") || errorMessage.includes("Timeout")) {
-        return NextResponse.json(
-          { error: "Page took too long to load. Please try again or check if the site is accessible." },
-          { status: 408 }
-        );
-      }
-      if (errorMessage.includes("net::ERR_NAME_NOT_RESOLVED")) {
-        return NextResponse.json(
-          { error: "Could not resolve the domain name. Please check the URL." },
-          { status: 502 }
-        );
-      }
-      if (errorMessage.includes("net::ERR_CONNECTION_REFUSED")) {
-        return NextResponse.json(
-          { error: "Connection refused by the server. The site may be down." },
-          { status: 502 }
-        );
-      }
-      return NextResponse.json(
-        { error: `Failed to load the page: ${errorMessage.substring(0, 100)}` },
-        { status: 502 }
-      );
-    }
-
-    let axeResults;
-    try {
-      axeResults = await new AxePuppeteer(page)
-        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
-        .analyze();
-    } catch {
-      return NextResponse.json(
-        { error: "Failed to analyze the page. The page may have security restrictions." },
-        { status: 500 }
-      );
-    }
+    const axeResults = await new AxePuppeteer(page)
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
+      .analyze();
 
     const summary = {
       critical: 0,
@@ -178,24 +104,278 @@ export async function POST(request: NextRequest) {
       return order[a.impact] - order[b.impact];
     });
 
-    const result = {
+    return {
       url,
       summary,
       violations,
       passedRules: axeResults.passes.length,
       testEngine: `axe-core ${axeResults.testEngine.version}`,
+      analysisMethod: "axe-core" as const,
     };
-
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error("Analysis error:", error);
-    return NextResponse.json(
-      { error: "An unexpected error occurred during analysis." },
-      { status: 500 }
-    );
   } finally {
     if (browser) {
       await browser.close();
     }
+  }
+}
+
+// ============ CHEERIO ANALYSIS (Fallback) ============
+
+const VAGUE_LINK_PATTERNS = [
+  /^click\s*here$/i,
+  /^here$/i,
+  /^read\s*more$/i,
+  /^learn\s*more$/i,
+  /^more$/i,
+  /^link$/i,
+];
+
+async function fetchWithTimeout(url: string, timeout: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "AccessibilitySimulator/1.0",
+        "Accept": "text/html,application/xhtml+xml",
+      },
+    });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function analyzeWithCheerio(url: string) {
+  const response = await fetchWithTimeout(url, FETCH_TIMEOUT);
+  
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const $ = cheerio.load(html);
+
+  // Count issues
+  let critical = 0;
+  let serious = 0;
+  let moderate = 0;
+  let minor = 0;
+
+  interface CheerioViolation {
+    id: string;
+    impact: "critical" | "serious" | "moderate" | "minor";
+    description: string;
+    help: string;
+    helpUrl: string;
+    tags: string[];
+    nodes: { html: string; target: string[]; failureSummary?: string }[];
+  }
+
+  const violations: CheerioViolation[] = [];
+
+  // Check images without alt
+  const imagesWithoutAlt: string[] = [];
+  $("img").each((_, el) => {
+    const alt = $(el).attr("alt");
+    if (alt === undefined || alt === null) {
+      const src = $(el).attr("src") || "";
+      imagesWithoutAlt.push(`<img src="${src.substring(0, 50)}...">`);
+    }
+  });
+  if (imagesWithoutAlt.length > 0) {
+    serious += 1;
+    violations.push({
+      id: "image-alt",
+      impact: "serious",
+      description: "Images must have alternate text",
+      help: `${imagesWithoutAlt.length} images missing alt attribute`,
+      helpUrl: "https://dequeuniversity.com/rules/axe/4.4/image-alt",
+      tags: ["wcag2a", "wcag111"],
+      nodes: imagesWithoutAlt.slice(0, 3).map(html => ({ html, target: ["img"] })),
+    });
+  }
+
+  // Check form inputs without labels
+  const inputsWithoutLabels: string[] = [];
+  $("input, textarea, select").not("[type='hidden'], [type='submit'], [type='button']").each((_, el) => {
+    const $el = $(el);
+    const id = $el.attr("id");
+    const ariaLabel = $el.attr("aria-label");
+    const hasLabel = (id && $(`label[for="${id}"]`).length > 0) || $el.closest("label").length > 0 || ariaLabel;
+    
+    if (!hasLabel) {
+      const name = $el.attr("name") || $el.attr("type") || "input";
+      inputsWithoutLabels.push(`<input name="${name}">`);
+    }
+  });
+  if (inputsWithoutLabels.length > 0) {
+    serious += 1;
+    violations.push({
+      id: "label",
+      impact: "serious",
+      description: "Form elements must have labels",
+      help: `${inputsWithoutLabels.length} form inputs missing labels`,
+      helpUrl: "https://dequeuniversity.com/rules/axe/4.4/label",
+      tags: ["wcag2a", "wcag412"],
+      nodes: inputsWithoutLabels.slice(0, 3).map(html => ({ html, target: ["input"] })),
+    });
+  }
+
+  // Check heading structure
+  const headings: number[] = [];
+  $("h1, h2, h3, h4, h5, h6").each((_, el) => {
+    const tagName = (el as unknown as { tagName: string }).tagName;
+    const level = parseInt(tagName.charAt(1));
+    headings.push(level);
+  });
+  
+  const headingIssues: string[] = [];
+  for (let i = 1; i < headings.length; i++) {
+    if (headings[i] > headings[i - 1] + 1) {
+      headingIssues.push(`Skipped from h${headings[i-1]} to h${headings[i]}`);
+    }
+  }
+  if (headings.length > 0 && headings[0] !== 1) {
+    headingIssues.push(`Page starts with h${headings[0]} instead of h1`);
+  }
+  if (headingIssues.length > 0) {
+    moderate += 1;
+    violations.push({
+      id: "heading-order",
+      impact: "moderate",
+      description: "Heading levels should increase by one",
+      help: `${headingIssues.length} heading structure issues`,
+      helpUrl: "https://dequeuniversity.com/rules/axe/4.4/heading-order",
+      tags: ["wcag2a", "wcag131"],
+      nodes: headingIssues.map(issue => ({ html: issue, target: ["h1-h6"] })),
+    });
+  }
+
+  // Check buttons without accessible names
+  const buttonsWithoutNames: string[] = [];
+  $("button, [role='button']").each((_, el) => {
+    const $el = $(el);
+    const text = $el.text().trim();
+    const ariaLabel = $el.attr("aria-label");
+    if (!text && !ariaLabel) {
+      buttonsWithoutNames.push("<button>(no text)</button>");
+    }
+  });
+  if (buttonsWithoutNames.length > 0) {
+    serious += 1;
+    violations.push({
+      id: "button-name",
+      impact: "serious",
+      description: "Buttons must have discernible text",
+      help: `${buttonsWithoutNames.length} buttons without accessible names`,
+      helpUrl: "https://dequeuniversity.com/rules/axe/4.4/button-name",
+      tags: ["wcag2a", "wcag412"],
+      nodes: buttonsWithoutNames.slice(0, 3).map(html => ({ html, target: ["button"] })),
+    });
+  }
+
+  // Check vague link text
+  const vagueLinks: string[] = [];
+  $("a[href]").each((_, el) => {
+    const text = $(el).text().trim();
+    if (text && VAGUE_LINK_PATTERNS.some(p => p.test(text))) {
+      vagueLinks.push(`<a>"${text}"</a>`);
+    }
+  });
+  if (vagueLinks.length > 0) {
+    minor += 1;
+    violations.push({
+      id: "link-name",
+      impact: "minor",
+      description: "Links should have descriptive text",
+      help: `${vagueLinks.length} links with vague text like "click here"`,
+      helpUrl: "https://dequeuniversity.com/rules/axe/4.4/link-name",
+      tags: ["wcag2a", "wcag244"],
+      nodes: vagueLinks.slice(0, 3).map(html => ({ html, target: ["a"] })),
+    });
+  }
+
+  // Count passes (rough estimate)
+  const totalImages = $("img").length;
+  const totalInputs = $("input, textarea, select").not("[type='hidden']").length;
+  const totalButtons = $("button, [role='button']").length;
+  const totalLinks = $("a[href]").length;
+  const passedChecks = 
+    (totalImages > 0 && imagesWithoutAlt.length === 0 ? 1 : 0) +
+    (totalInputs > 0 && inputsWithoutLabels.length === 0 ? 1 : 0) +
+    (headingIssues.length === 0 ? 1 : 0) +
+    (totalButtons > 0 && buttonsWithoutNames.length === 0 ? 1 : 0) +
+    (totalLinks > 0 && vagueLinks.length === 0 ? 1 : 0);
+
+  return {
+    url,
+    summary: {
+      critical,
+      serious,
+      moderate,
+      minor,
+      passes: passedChecks,
+    },
+    violations,
+    passedRules: passedChecks,
+    testEngine: "cheerio (lightweight)",
+    analysisMethod: "cheerio" as const,
+  };
+}
+
+// ============ MAIN HANDLER ============
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { url } = body;
+
+    if (!url || typeof url !== "string") {
+      return NextResponse.json(
+        { error: "URL is required" },
+        { status: 400 }
+      );
+    }
+
+    if (!isValidUrl(url)) {
+      return NextResponse.json(
+        { error: "Invalid URL format. Please provide a valid HTTP or HTTPS URL." },
+        { status: 400 }
+      );
+    }
+
+    // Try axe-core first (comprehensive)
+    try {
+      console.log("Attempting axe-core analysis...");
+      const result = await analyzeWithAxe(url);
+      console.log("axe-core analysis succeeded");
+      return NextResponse.json(result);
+    } catch (axeError) {
+      console.error("axe-core failed, falling back to cheerio:", axeError);
+    }
+
+    // Fallback to cheerio (lightweight)
+    try {
+      console.log("Attempting cheerio analysis...");
+      const result = await analyzeWithCheerio(url);
+      console.log("cheerio analysis succeeded");
+      return NextResponse.json(result);
+    } catch (cheerioError) {
+      console.error("cheerio also failed:", cheerioError);
+      const errorMessage = cheerioError instanceof Error ? cheerioError.message : "Unknown error";
+      return NextResponse.json(
+        { error: `Failed to analyze the page: ${errorMessage}` },
+        { status: 502 }
+      );
+    }
+  } catch (error) {
+    console.error("Request error:", error);
+    return NextResponse.json(
+      { error: "An unexpected error occurred." },
+      { status: 500 }
+    );
   }
 }

@@ -5,6 +5,7 @@
  */
 
 import * as cheerio from "cheerio";
+import type { Element } from "domhandler";
 import type { AeoAnalyzeResult, AeoCheck, AeoExtracted } from "./types";
 
 const VAGUE_LINK_PATTERNS = [
@@ -33,7 +34,7 @@ const KNOWN_JSON_LD_TYPES = [
   "LocalBusiness",
 ];
 
-function getText($: cheerio.CheerioAPI, el: cheerio.Element): string {
+function getText($: cheerio.CheerioAPI, el: Element): string {
   return $(el).text().replace(/\s+/g, " ").trim();
 }
 

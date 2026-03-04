@@ -18,15 +18,33 @@ export default function Home() {
           </p>
         </div>
 
-        <Link
-          href="/simulator"
-          className="inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold px-8 py-4 rounded-xl transition-colors text-lg"
-        >
-          Launch Simulator
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-          </svg>
-        </Link>
+        <div className="flex flex-wrap gap-4 justify-center">
+          <Link
+            href="/simulator"
+            className="inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold px-8 py-4 rounded-xl transition-colors text-lg"
+          >
+            Launch Simulator
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
+          </Link>
+          <Link
+            href="/aeo"
+            className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-8 py-4 rounded-xl transition-colors text-lg"
+          >
+            AEO Scanner
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </Link>
+          <Link
+            href="/career-day"
+            className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-semibold px-8 py-4 rounded-xl transition-colors text-lg"
+          >
+            Career Day (Kids)
+            <span aria-hidden="true">👋</span>
+          </Link>
+        </div>
 
         <div className="grid grid-cols-2 gap-4 pt-4">
           <div className="bg-slate-800/50 rounded-lg p-4 text-left">
@@ -38,6 +56,11 @@ export default function Home() {
             <div className="text-lg mb-1">🔍</div>
             <h3 className="text-white font-medium mb-1">Site Analysis</h3>
             <p className="text-slate-400 text-sm">Paste any URL for quick accessibility audit</p>
+          </div>
+          <div className="bg-slate-800/50 rounded-lg p-4 text-left">
+            <div className="text-lg mb-1">📡</div>
+            <h3 className="text-white font-medium mb-1">AEO Scanner</h3>
+            <p className="text-slate-400 text-sm">Quick signals for answer engine optimization</p>
           </div>
           <div className="bg-slate-800/50 rounded-lg p-4 text-left">
             <div className="text-lg mb-1">📖</div>

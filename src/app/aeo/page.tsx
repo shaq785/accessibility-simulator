@@ -19,7 +19,7 @@ type DemoPage = "good" | "bad";
 type Mode = "demo" | "analyze";
 
 export default function AeoPage() {
-  const [mode, setMode] = useState<Mode>("demo");
+  const [mode, setMode] = useState<Mode>("analyze");
   const [activePage, setActivePage] = useState<DemoPage>("good");
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -213,31 +213,34 @@ export default function AeoPage() {
             )}
 
             {result && !loading && (
-              <div className="p-4 space-y-6">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <AeoScoreCard result={result} />
-                  <CopyReportButton result={result} />
-                </div>
-
-                {result.suggestions.length > 0 && (
-                  <section className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
-                    <h3 className="text-sm font-semibold text-yellow-400 mb-2">Suggested improvements</h3>
-                    <ul className="list-disc list-inside space-y-1 text-slate-300 text-sm">
-                      {result.suggestions.map((s, i) => (
-                        <li key={i}>{s}</li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-
-                <section>
-                  <h3 className="text-sm font-medium text-slate-400 mb-2">Checks</h3>
-                  <ChecksList checks={result.checks} />
-                </section>
-
-                <section>
+              <div className="p-4 flex flex-col lg:flex-row lg:items-start gap-6">
+                {/* Left: What an answer engine sees — compare side by side on desktop */}
+                <aside className="lg:w-[min(48%,28rem)] lg:flex-shrink-0 lg:sticky lg:top-4">
                   <AnswerEngineView extracted={result.extracted} />
-                </section>
+                </aside>
+                {/* Right: Score and analysis */}
+                <div className="lg:flex-1 lg:min-w-0 space-y-6">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <AeoScoreCard result={result} />
+                    <CopyReportButton result={result} />
+                  </div>
+
+                  {result.suggestions.length > 0 && (
+                    <section className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
+                      <h3 className="text-sm font-semibold text-yellow-400 mb-2">Suggested improvements</h3>
+                      <ul className="list-disc list-inside space-y-1 text-slate-300 text-sm">
+                        {result.suggestions.map((s, i) => (
+                          <li key={i}>{s}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+
+                  <section>
+                    <h3 className="text-sm font-medium text-slate-400 mb-2">Checks</h3>
+                    <ChecksList checks={result.checks} />
+                  </section>
+                </div>
               </div>
             )}
           </div>

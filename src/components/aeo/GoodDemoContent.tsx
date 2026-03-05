@@ -5,6 +5,9 @@ export function GoodDemoContent() {
       <p className="text-lg text-gray-700 mb-6">
         Compost is decayed organic matter—such as leaves, food scraps, and yard waste—that is used to enrich soil and improve plant growth. It is often called &ldquo;black gold&rdquo; because it adds nutrients and improves soil structure, helping gardens thrive without chemical fertilizers.
       </p>
+      <p className="text-gray-700 mb-6">
+        Composting also reduces landfill waste and cuts greenhouse gas emissions. In a 2023 survey, 32% of gardeners reported better soil quality within one season. These practices help both your garden and the environment.
+      </p>
 
       <h2 className="text-xl font-semibold text-gray-900 mt-8 mb-3">Benefits of Composting</h2>
       <ul className="list-disc list-inside text-gray-700 space-y-2 mb-6">

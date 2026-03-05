@@ -3,6 +3,23 @@
 import { useState } from "react";
 import type { AeoCheck } from "@/lib/aeo/types";
 
+/** Short "Why it helps" from the PDF checklist (Answer Engine AEO). */
+const WHY_IT_HELPS: Partial<Record<string, string>> = {
+  "answer-first":
+    "Answer engines weight early-page content more heavily and use it to signal relevance to a specific query.",
+  "add-context":
+    "Supporting context helps LLMs validate that your answer is substantiated and increases the chance of a full citation.",
+  structure:
+    "Structured content is easier for answer engines to parse and cite; lists and tables are scannable by both bots and users.",
+  faq: "FAQs mirror the conversational Q&A format LLMs use; each Q&A can be independently extracted for different queries.",
+  "original-insights":
+    "Net new information (research, stats, quotes) is what earns citations in AI responses—generic content gets skipped.",
+  "connect-product":
+    "When passages are extracted in isolation, they should still reference your brand or product so you get credit.",
+  "schema-markup":
+    "Schema gives answer engines a machine-readable summary of the page; FAQPage and Article reinforce E-E-A-T signals.",
+};
+
 interface ChecksListProps {
   checks: AeoCheck[];
 }
@@ -53,7 +70,10 @@ export function ChecksList({ checks }: ChecksListProps) {
               </svg>
             </button>
             {isExpanded && (
-              <div className="px-4 pb-4 pt-0 pl-14">
+              <div className="px-4 pb-4 pt-0 pl-14 space-y-2">
+                {WHY_IT_HELPS[check.id] && (
+                  <p className="text-xs text-slate-500 italic">Why it helps: {WHY_IT_HELPS[check.id]}</p>
+                )}
                 <p className="text-sm text-slate-400">{check.notes}</p>
               </div>
             )}

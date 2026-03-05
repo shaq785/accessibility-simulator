@@ -1,7 +1,7 @@
 /**
  * AEO (Answer Engine Optimization) analyzer.
- * Server-side only. Parses HTML with cheerio and runs checks + extraction.
- * Does NOT use AI/LLMs. Educational tool to see what answer engines can extract.
+ * Based on the "Answer Engine AEO Checklist" (Audience Strategy / Field Notes).
+ * Server-side only. Parses HTML with cheerio. No AI/LLMs.
  */
 
 import * as cheerio from "cheerio";
@@ -24,15 +24,33 @@ const FAQ_HEADING_PATTERNS = [
   /common\s+questions?/i,
 ];
 
-const KNOWN_JSON_LD_TYPES = [
-  "Organization",
-  "WebSite",
+/** PDF "Schema Types to Prioritize": Article, FAQPage, HowTo, Product, Organization, BreadcrumbList (+ BlogPosting) */
+const PDF_JSON_LD_TYPES = [
   "Article",
+  "BlogPosting",
   "FAQPage",
   "HowTo",
   "Product",
-  "LocalBusiness",
+  "Organization",
+  "BreadcrumbList",
 ];
+
+/** PDF-based "How to Fix It" suggestion for each check (when failed) */
+const SUGGESTION_BY_CHECK: Record<string, string> = {
+  "answer-first":
+    "Lead with the direct answer in the first sentence or two; use H1 as question, first paragraph as answer; keep title and meta description clear.",
+  "add-context":
+    "Add 2–3 paragraphs of supporting context (examples, definitions, methodology) after the answer.",
+  structure:
+    "Use H1→H2→H3 heading hierarchy with no skipped levels; add lists or tables; ensure each section can stand alone.",
+  faq: "Add a dedicated FAQ section with natural language questions and 2–4 sentence answers; consider FAQPage schema (PDF recommends 5–8 questions).",
+  "original-insights":
+    "Include original research, stats, expert quotes, or case studies; cite sources so answer engines can surface unique content.",
+  "connect-product":
+    "Ensure key insights connect to your product or brand; use internal links so extracted passages still reference you.",
+  "schema-markup":
+    "Add JSON-LD for FAQPage, Article, HowTo, Product, Organization, or BreadcrumbList per schema.org.",
+};
 
 function getText($: cheerio.CheerioAPI, el: Element): string {
   return $(el).text().replace(/\s+/g, " ").trim();
@@ -89,7 +107,6 @@ function extractFaqFromJsonLd($: cheerio.CheerioAPI): { q: string; a: string }[]
 
 function extractFaqFromMarkup($: cheerio.CheerioAPI): { q: string; a: string }[] {
   const faqs: { q: string; a: string }[] = [];
-  // dl dt/dd
   $("dl").each((_, dl) => {
     const $dl = $(dl);
     const dts = $dl.find("dt");
@@ -100,14 +117,12 @@ function extractFaqFromMarkup($: cheerio.CheerioAPI): { q: string; a: string }[]
       if (q && a) faqs.push({ q, a });
     });
   });
-  // details/summary as Q/A
   $("details").each((_, det) => {
     const $det = $(det);
     const q = $det.find("summary").text().replace(/\s+/g, " ").trim();
     const a = $det.children().not("summary").text().replace(/\s+/g, " ").trim();
     if (q && a) faqs.push({ q, a });
   });
-  // Headings that look like FAQ (e.g. "Q: ..." or section with "FAQ")
   $("h2, h3, h4").each((_, h) => {
     const text = getText($, h);
     if (!FAQ_HEADING_PATTERNS.some((p) => p.test(text))) return;
@@ -131,13 +146,22 @@ function getFirstMeaningfulParagraphs($: cheerio.CheerioAPI, maxChars: number): 
   const paragraphs: string[] = [];
   let total = 0;
   $("p").each((_, el) => {
-    if (total >= maxChars) return false; // break
+    if (total >= maxChars) return false;
     const text = getText($, el);
     if (text.length < 30) return;
     paragraphs.push(text);
     total += text.length;
   });
-  return paragraphs.slice(0, 3);
+  return paragraphs;
+}
+
+function getAllMeaningfulParagraphs($: cheerio.CheerioAPI, minLen: number): string[] {
+  const paragraphs: string[] = [];
+  $("p").each((_, el) => {
+    const text = getText($, el);
+    if (text.length >= minLen) paragraphs.push(text);
+  });
+  return paragraphs;
 }
 
 function buildSuggestedSnippet(paragraphs: string[]): string {
@@ -149,13 +173,32 @@ function buildSuggestedSnippet(paragraphs: string[]): string {
   return (lastSpace > maxLen / 2 ? truncated.slice(0, lastSpace) : truncated) + "...";
 }
 
+/** Heuristic: body contains numbers/%, quotes, or research-like language (no LLM) */
+function hasOriginalInsightsHeuristic($: cheerio.CheerioAPI): boolean {
+  const bodyText = $("body").text().replace(/\s+/g, " ");
+  if (bodyText.length < 100) return false;
+  if (/\d+%/.test(bodyText)) return true;
+  if (/\d+\s+of\s+\d+/.test(bodyText)) return true;
+  if (/["'][^"']{10,}["']/.test(bodyText)) return true;
+  const lower = bodyText.toLowerCase();
+  if (/\b(study|survey|research|found|case study|according to|statistic|data)\b/.test(lower)) return true;
+  return false;
+}
+
 export function analyzeAeo(html: string, url: string): AeoAnalyzeResult {
   const $ = cheerio.load(html);
   const checks: AeoCheck[] = [];
-  let totalPoints = 0;
+  const MAX_POINTS = 100;
   let earnedPoints = 0;
 
   const baseUrl = url.replace(/\/[^/]*$/, "/");
+  let parsedBase: URL;
+  try {
+    parsedBase = new URL(url);
+  } catch {
+    parsedBase = new URL("https://example.com/");
+  }
+  const pageHost = parsedBase.hostname.toLowerCase();
 
   const title = $("title").first().text().replace(/\s+/g, " ").trim();
   const metaDesc = $('meta[name="description"]').attr("content")?.trim() ?? "";
@@ -175,11 +218,12 @@ export function analyzeAeo(html: string, url: string): AeoAnalyzeResult {
   const faq = faqFromJsonLd.length > 0 ? faqFromJsonLd : faqFromMarkup;
 
   const topParagraphs = getFirstMeaningfulParagraphs($, 600);
+  const allParagraphs = getAllMeaningfulParagraphs($, 40);
   const suggestedAnswerSnippet = buildSuggestedSnippet(topParagraphs);
 
   const keyLinks: { text: string; href: string }[] = [];
   $("a[href]").each((_, el) => {
-    if (keyLinks.length >= 10) return false;
+    if (keyLinks.length >= 15) return false;
     const $a = $(el);
     const href = $a.attr("href") ?? "";
     if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
@@ -189,193 +233,147 @@ export function analyzeAeo(html: string, url: string): AeoAnalyzeResult {
     keyLinks.push({ text, href: absolute });
   });
 
-  // —— Check 1: Title (30–65 chars, ~8 pts)
+  const internalLinks = keyLinks.filter((l) => {
+    try {
+      return new URL(l.href).hostname.toLowerCase() === pageHost;
+    } catch {
+      return false;
+    }
+  });
+  const vagueLinks = keyLinks.filter((l) => VAGUE_LINK_PATTERNS.some((p) => p.test(l.text)));
+
+  // —— 1. Put the Answer First (20 pts)
+  const oneH1 = h1s.length === 1 && h1Text.length > 0;
+  const introText = topParagraphs[0] ?? "";
+  const answerLikeIntro = introText.length >= 80 && introText.length <= 400;
   const titleLen = title.length;
   const titleOk = titleLen >= 30 && titleLen <= 65;
-  totalPoints += 8;
-  if (titleOk) earnedPoints += 8;
-  checks.push({
-    id: "title",
-    label: "Title tag present and descriptive (30–65 chars)",
-    pass: titleOk,
-    points: titleOk ? 8 : 0,
-    maxPoints: 8,
-    notes: title ? `Length: ${titleLen} chars. ${titleOk ? "Good." : titleLen < 30 ? "Too short." : "Too long."}` : "Title tag missing.",
-  });
-
-  // —— Check 2: Meta description (70–160 chars, ~8 pts)
   const descLen = metaDesc.length;
   const descOk = descLen >= 70 && descLen <= 160;
-  totalPoints += 8;
-  if (descOk) earnedPoints += 8;
+  const answerFirstOk = oneH1 && answerLikeIntro && titleOk && descOk;
+  earnedPoints += answerFirstOk ? 20 : 0;
   checks.push({
-    id: "meta-description",
-    label: "Meta description present (70–160 chars)",
-    pass: descOk,
-    points: descOk ? 8 : 0,
-    maxPoints: 8,
-    notes: metaDesc ? `Length: ${descLen} chars. ${descOk ? "Good." : descLen < 70 ? "Too short." : "Too long."}` : "Meta description missing.",
+    id: "answer-first",
+    label: "1. Put the Answer First",
+    pass: answerFirstOk,
+    points: answerFirstOk ? 20 : 0,
+    maxPoints: 20,
+    notes: !oneH1
+      ? "Need exactly one H1."
+      : !answerLikeIntro
+        ? introText.length < 80
+          ? "First paragraph too short (aim 80–400 chars). Lead with the direct answer."
+          : "First paragraph too long; keep the answer in the first 1–2 sentences."
+        : !titleOk || !descOk
+          ? `Title/meta: ${!titleOk ? "title 30–65 chars" : ""} ${!descOk ? "description 70–160 chars" : ""}.`.trim()
+          : "Answer is at the top; title and meta are clear.",
   });
 
-  // —— Check 3: Exactly one H1 (~8 pts)
-  const oneH1 = h1s.length === 1 && h1Text.length > 0;
-  totalPoints += 8;
-  if (oneH1) earnedPoints += 8;
+  // —— 2. Add Context (15 pts)
+  const hasContext = allParagraphs.length >= 3;
+  earnedPoints += hasContext ? 15 : 0;
   checks.push({
-    id: "h1",
-    label: "Exactly one H1 that matches page topic",
-    pass: oneH1,
-    points: oneH1 ? 8 : 0,
-    maxPoints: 8,
-    notes: h1s.length === 0 ? "No H1 found." : h1s.length > 1 ? `Multiple H1s (${h1s.length}).` : "One clear H1.",
+    id: "add-context",
+    label: "2. Add Context",
+    pass: hasContext,
+    points: hasContext ? 15 : 0,
+    maxPoints: 15,
+    notes: hasContext
+      ? `Found ${allParagraphs.length} substantial paragraphs; supporting context present.`
+      : "Add 2–3 supporting paragraphs after the answer (examples, definitions, methodology).",
   });
 
-  // —— Check 4: Heading structure (~8 pts)
-  let headingOk = true;
+  // —— 3. Add Structure (15 pts)
+  let headingHierarchyOk = true;
   for (let i = 1; i < headings.length; i++) {
     if (headings[i].level > headings[i - 1].level + 1) {
-      headingOk = false;
+      headingHierarchyOk = false;
       break;
     }
   }
-  if (headings.length > 0 && headings[0].level !== 1) headingOk = false;
-  totalPoints += 8;
-  if (headingOk && headings.length >= 2) earnedPoints += 8;
+  if (headings.length > 0 && headings[0].level !== 1) headingHierarchyOk = false;
+  const hasListOrTable = $("ul, ol").length >= 1 || $("table").length >= 1;
+  const structureOk = headingHierarchyOk && headings.length >= 2 && hasListOrTable;
+  earnedPoints += structureOk ? 15 : 0;
   checks.push({
-    id: "heading-structure",
-    label: "Clear heading structure (H2/H3, no big jumps)",
-    pass: headingOk,
-    points: headingOk && headings.length >= 2 ? 8 : 0,
-    maxPoints: 8,
-    notes: headingOk ? "Logical heading hierarchy." : "Skipped levels or no H1.",
+    id: "structure",
+    label: "3. Add Structure to the Page",
+    pass: structureOk,
+    points: structureOk ? 15 : 0,
+    maxPoints: 15,
+    notes: !headingHierarchyOk
+      ? "Fix heading hierarchy (H1→H2→H3, no skipped levels)."
+      : !hasListOrTable
+        ? "Add at least one list or table so the page is scannable."
+        : "Clear heading structure and scannable content (lists/tables).",
   });
 
-  // —— Check 5: First 300–500 chars answer-like (~8 pts)
-  const introText = topParagraphs[0] ?? "";
-  const introOk = introText.length >= 80 && introText.length <= 600;
-  totalPoints += 8;
-  if (introOk) earnedPoints += 8;
-  checks.push({
-    id: "intro-summary",
-    label: "First 300–500 chars contain a clear answer-like summary",
-    pass: introOk,
-    points: introOk ? 8 : 0,
-    maxPoints: 8,
-    notes: introText.length >= 80 ? "Strong intro paragraph found." : "Add a clear intro paragraph (80+ chars).",
-  });
-
-  // —— Check 6: FAQ section or FAQPage JSON-LD (~8 pts)
+  // —— 4. Include an FAQ (15 pts)
   const hasFaq = faq.length >= 1;
-  totalPoints += 8;
-  if (hasFaq) earnedPoints += 8;
+  const faqCountNote = hasFaq && faq.length < 5 ? " PDF recommends 5–8 questions." : "";
+  earnedPoints += hasFaq ? 15 : 0;
   checks.push({
     id: "faq",
-    label: "FAQ section and/or FAQPage JSON-LD",
+    label: "4. Include an FAQ",
     pass: hasFaq,
-    points: hasFaq ? 8 : 0,
-    maxPoints: 8,
-    notes: hasFaq ? `Found ${faq.length} Q/A(s).` : "No FAQ section or FAQPage schema detected.",
+    points: hasFaq ? 15 : 0,
+    maxPoints: 15,
+    notes: hasFaq ? `Found ${faq.length} Q/A(s).${faqCountNote}` : "Add a dedicated FAQ section; use natural language questions and 2–4 sentence answers; consider FAQPage schema.",
   });
 
-  // —— Check 7: Structured data (at least one known type) (~10 pts)
-  const hasStructured = KNOWN_JSON_LD_TYPES.some((t) => jsonLdTypes.includes(t));
-  totalPoints += 10;
-  if (hasStructured) earnedPoints += 10;
+  // —— 5. Original Insights (10 pts, heuristic)
+  const hasInsights = hasOriginalInsightsHeuristic($);
+  earnedPoints += hasInsights ? 10 : 0;
   checks.push({
-    id: "json-ld",
-    label: "Structured data JSON-LD (Organization, WebSite, Article, FAQPage, HowTo, etc.)",
-    pass: hasStructured,
-    points: hasStructured ? 10 : 0,
+    id: "original-insights",
+    label: "5. Include Original Insights",
+    pass: hasInsights,
+    points: hasInsights ? 10 : 0,
     maxPoints: 10,
-    notes: hasStructured ? `Types: ${jsonLdTypes.join(", ") || "—"}.` : "No recognized JSON-LD found.",
+    notes: hasInsights
+      ? "Page contains stats, quotes, or research-like language (heuristic)."
+      : "Include original research, stats, or expert quotes; verify manually for best results.",
   });
 
-  // —— Check 8: Internal links descriptive (~6 pts)
-  const vagueLinks = keyLinks.filter((l) => VAGUE_LINK_PATTERNS.some((p) => p.test(l.text)));
-  const descriptiveOk = vagueLinks.length === 0 && keyLinks.length > 0;
-  totalPoints += 6;
-  if (descriptiveOk) earnedPoints += 6;
+  // —— 6. Connect to Product (10 pts)
+  const hasInternalDescriptive =
+    internalLinks.length >= 1 && internalLinks.every((l) => !VAGUE_LINK_PATTERNS.some((p) => p.test(l.text)));
+  const connectOk = keyLinks.length === 0 ? true : hasInternalDescriptive && vagueLinks.length === 0;
+  earnedPoints += connectOk ? 10 : 0;
   checks.push({
-    id: "link-text",
-    label: "Internal links with descriptive anchor text",
-    pass: descriptiveOk,
-    points: descriptiveOk ? 6 : 0,
-    maxPoints: 6,
-    notes: vagueLinks.length > 0 ? `Vague link text found (e.g. "${vagueLinks[0]?.text ?? ""}").` : "Links use descriptive text.",
+    id: "connect-product",
+    label: "6. Connect Points to the Product",
+    pass: connectOk,
+    points: connectOk ? 10 : 0,
+    maxPoints: 10,
+    notes: vagueLinks.length > 0
+      ? `Avoid vague link text (e.g. "${vagueLinks[0]?.text ?? "click here"}"). Use descriptive internal links.`
+      : internalLinks.length < 1 && keyLinks.length > 0
+        ? "Add internal links with descriptive anchor text so extracted passages can reference your brand."
+        : "Internal links use descriptive text; ensure key insights connect to product/brand.",
   });
 
-  // —— Check 9: Images alt text (~6 pts)
-  const imgs = $("img");
-  const imgsWithoutAlt: number[] = [];
-  imgs.each((_, el) => {
-    const alt = $(el).attr("alt");
-    if (alt === undefined || alt === null || alt.trim() === "") imgsWithoutAlt.push(1);
-  });
-  const altOk = imgsWithoutAlt.length === 0;
-  totalPoints += 6;
-  if (altOk || imgs.length === 0) earnedPoints += 6;
+  // —— 7. Embed Schema Markup (15 pts)
+  const hasSchema = PDF_JSON_LD_TYPES.some((t) => jsonLdTypes.includes(t));
+  earnedPoints += hasSchema ? 15 : 0;
   checks.push({
-    id: "image-alt",
-    label: "Images have alt text that supports understanding",
-    pass: altOk || imgs.length === 0,
-    points: altOk || imgs.length === 0 ? 6 : 0,
-    maxPoints: 6,
-    notes: imgs.length === 0 ? "No images; N/A." : altOk ? "All images have alt." : `${imgsWithoutAlt.length} image(s) missing alt.`,
+    id: "schema-markup",
+    label: "7. Embed Schema Markup",
+    pass: hasSchema,
+    points: hasSchema ? 15 : 0,
+    maxPoints: 15,
+    notes: hasSchema
+      ? `Found: ${jsonLdTypes.filter((t) => PDF_JSON_LD_TYPES.includes(t)).join(", ") || "—"}.`
+      : "Add JSON-LD for FAQPage, Article, HowTo, Product, Organization, or BreadcrumbList (schema.org).",
   });
 
-  // —— Check 10: Author/date (~5 pts)
-  const publishedMeta = $('meta[property="article:published_time"], meta[name="datePublished"]').attr("content");
-  const authorMeta = $('meta[name="author"], meta[property="article:author"]').attr("content");
-  const hasAuthorDate = !!(publishedMeta || authorMeta);
-  totalPoints += 5;
-  if (hasAuthorDate) earnedPoints += 5;
-  checks.push({
-    id: "author-date",
-    label: "Author/date signals (for article pages)",
-    pass: hasAuthorDate,
-    points: hasAuthorDate ? 5 : 0,
-    maxPoints: 5,
-    notes: hasAuthorDate ? "Author or date meta found." : "Consider adding article:published_time or author meta.",
-  });
-
-  // —— Check 11: Contact/Trust (~5 pts)
-  const footerText = $("footer").text().toLowerCase();
-  const hasContactLink = $('a[href*="contact"], a[href*="about"], a[href*="about-us"]').length > 0;
-  const hasTrust = /contact|about|@|phone|address|email/.test(footerText) || hasContactLink;
-  totalPoints += 5;
-  if (hasTrust) earnedPoints += 5;
-  checks.push({
-    id: "contact-trust",
-    label: "Contact/Trust signals (About, Contact, footer)",
-    pass: hasTrust,
-    points: hasTrust ? 5 : 0,
-    maxPoints: 5,
-    notes: hasTrust ? "Contact or About links/footer content found." : "Add About/Contact links or footer with contact info.",
-  });
-
-  // —— Check 12: Scannable content (~6 pts)
-  const allParagraphs = $("p").map((_, el) => getText($, el)).get();
-  const listCount = $("ul, ol").length;
-  const avgLen = allParagraphs.length ? allParagraphs.reduce((a, p) => a + p.length, 0) / allParagraphs.length : 0;
-  const scannableOk = listCount >= 1 || (avgLen > 0 && avgLen <= 250);
-  totalPoints += 6;
-  if (scannableOk) earnedPoints += 6;
-  checks.push({
-    id: "scannable",
-    label: "Scannable content (lists, short paragraphs)",
-    pass: scannableOk,
-    points: scannableOk ? 6 : 0,
-    maxPoints: 6,
-    notes: listCount >= 1 ? `Lists found: ${listCount}.` : avgLen <= 250 ? "Reasonable paragraph length." : "Add lists or shorten paragraphs.",
-  });
-
-  const score = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+  const score = Math.round((earnedPoints / MAX_POINTS) * 100);
   const passedCount = checks.filter((c) => c.pass).length;
   const badge: "Good" | "Needs work" = score >= 70 ? "Good" : "Needs work";
   const failedChecks = checks.filter((c) => !c.pass);
   const suggestions = failedChecks
     .slice(0, 5)
-    .map((c) => c.notes)
+    .map((c) => SUGGESTION_BY_CHECK[c.id] ?? c.notes)
     .filter(Boolean);
 
   const extracted: AeoExtracted = {
@@ -384,10 +382,10 @@ export function analyzeAeo(html: string, url: string): AeoAnalyzeResult {
     canonical: canonical || "(none)",
     h1: h1Text || "(none)",
     headings,
-    topParagraphs,
+    topParagraphs: topParagraphs.slice(0, 3),
     faq,
     jsonLdTypes,
-    keyLinks,
+    keyLinks: keyLinks.slice(0, 10),
     suggestedAnswerSnippet: suggestedAnswerSnippet || "(none)",
   };
 

@@ -6,7 +6,7 @@
 
 import * as cheerio from "cheerio";
 import type { Element } from "domhandler";
-import type { AeoAnalyzeResult, AeoCheck, AeoExtracted } from "./types";
+import type { AeoAnalyzeResult, AeoCheck, AeoExtracted, CheckEvidence } from "./types";
 
 const VAGUE_LINK_PATTERNS = [
   /^click\s*here$/i,
@@ -173,16 +173,37 @@ function buildSuggestedSnippet(paragraphs: string[]): string {
   return (lastSpace > maxLen / 2 ? truncated.slice(0, lastSpace) : truncated) + "...";
 }
 
-/** Heuristic: body contains numbers/%, quotes, or research-like language (no LLM) */
-function hasOriginalInsightsHeuristic($: cheerio.CheerioAPI): boolean {
-  const bodyText = $("body").text().replace(/\s+/g, " ");
-  if (bodyText.length < 100) return false;
-  if (/\d+%/.test(bodyText)) return true;
-  if (/\d+\s+of\s+\d+/.test(bodyText)) return true;
-  if (/["'][^"']{10,}["']/.test(bodyText)) return true;
-  const lower = bodyText.toLowerCase();
-  if (/\b(study|survey|research|found|case study|according to|statistic|data)\b/.test(lower)) return true;
-  return false;
+/** Text from main content only (excludes script, style) so we don't match code/analytics as "quoted text". */
+function getMainContentText($: cheerio.CheerioAPI): string {
+  return $("p, article, main, h1, h2, h3, h4, h5, h6, li, td, th").text().replace(/\s+/g, " ").trim();
+}
+
+/** Original-insights signals in main content only. Returns matched reasons for partial points. */
+function getOriginalInsightsSignals($: cheerio.CheerioAPI): string[] {
+  const mainText = getMainContentText($);
+  if (mainText.length < 80) return [];
+  const signals: string[] = [];
+  if (/\d+%/.test(mainText)) signals.push("percentages/statistics");
+  if (/\d+\s+of\s+\d+/.test(mainText)) signals.push("numeric data");
+  const lower = mainText.toLowerCase();
+  if (/\b(study|survey|research|found|case study|according to|statistic|data)\b/.test(lower)) signals.push("research-like terms");
+  const pText = $("p").text().replace(/\s+/g, " ");
+  if (/"[^"\\]{15,150}"/.test(pText) || /'[^'\\]{15,150}'/.test(pText)) signals.push("quoted text (in paragraphs)");
+  return signals;
+}
+
+/** For each paragraph, check if it contains any internal link anchor text (for Connect to Product evidence). */
+function getParagraphsWithLinkCheck(
+  paragraphs: string[],
+  internalLinks: { text: string; href: string }[]
+): { text: string; note: string; found: boolean; highlight?: string }[] {
+  return paragraphs.map((p) => {
+    const link = internalLinks.find((l) => p.includes(l.text.trim()));
+    if (link) {
+      return { text: p, note: "Contains internal link", found: true, highlight: link.text.trim() };
+    }
+    return { text: p, note: "No internal link in this paragraph", found: false };
+  });
 }
 
 export function analyzeAeo(html: string, url: string): AeoAnalyzeResult {
@@ -242,7 +263,7 @@ export function analyzeAeo(html: string, url: string): AeoAnalyzeResult {
   });
   const vagueLinks = keyLinks.filter((l) => VAGUE_LINK_PATTERNS.some((p) => p.test(l.text)));
 
-  // —— 1. Put the Answer First (20 pts)
+  // —— 1. Put the Answer First (20 pts) — partial: 5 each for H1, intro, title, meta
   const oneH1 = h1s.length === 1 && h1Text.length > 0;
   const introText = topParagraphs[0] ?? "";
   const answerLikeIntro = introText.length >= 80 && introText.length <= 400;
@@ -250,13 +271,24 @@ export function analyzeAeo(html: string, url: string): AeoAnalyzeResult {
   const titleOk = titleLen >= 30 && titleLen <= 65;
   const descLen = metaDesc.length;
   const descOk = descLen >= 70 && descLen <= 160;
-  const answerFirstOk = oneH1 && answerLikeIntro && titleOk && descOk;
-  earnedPoints += answerFirstOk ? 20 : 0;
+  const answerFirstPts = (oneH1 ? 5 : 0) + (answerLikeIntro ? 5 : 0) + (titleOk ? 5 : 0) + (descOk ? 5 : 0);
+  const answerFirstOk = answerFirstPts === 20;
+  earnedPoints += answerFirstPts;
+  const answerFirstEvidence: CheckEvidence = {
+    type: "answer-first",
+    firstParagraph: introText.slice(0, 400) + (introText.length > 400 ? "…" : ""),
+    firstParagraphLength: introText.length,
+    inRange: answerLikeIntro,
+    titleLength: titleLen,
+    titleOk: titleOk,
+    metaLength: descLen,
+    metaOk: descOk,
+  };
   checks.push({
     id: "answer-first",
     label: "1. Put the Answer First",
     pass: answerFirstOk,
-    points: answerFirstOk ? 20 : 0,
+    points: answerFirstPts,
     maxPoints: 20,
     notes: !oneH1
       ? "Need exactly one H1."
@@ -267,20 +299,30 @@ export function analyzeAeo(html: string, url: string): AeoAnalyzeResult {
         : !titleOk || !descOk
           ? `Title/meta: ${!titleOk ? "title 30–65 chars" : ""} ${!descOk ? "description 70–160 chars" : ""}.`.trim()
           : "Answer is at the top; title and meta are clear.",
+    evidence: answerFirstEvidence,
   });
 
-  // —— 2. Add Context (15 pts)
-  const hasContext = allParagraphs.length >= 3;
-  earnedPoints += hasContext ? 15 : 0;
+  // —— 2. Add Context (15 pts) — partial: 5 per paragraph for first 3
+  const addContextPts = Math.min(15, allParagraphs.length * 5);
+  earnedPoints += addContextPts;
+  const addContextEvidence: CheckEvidence = {
+    type: "paragraphs",
+    items: allParagraphs.slice(0, 8).map((p, i) => ({
+      text: p.slice(0, 350) + (p.length > 350 ? "…" : ""),
+      note: `Paragraph ${i + 1} (${p.length} chars)`,
+      found: true,
+    })),
+  };
   checks.push({
     id: "add-context",
     label: "2. Add Context",
-    pass: hasContext,
-    points: hasContext ? 15 : 0,
+    pass: addContextPts === 15,
+    points: addContextPts,
     maxPoints: 15,
-    notes: hasContext
+    notes: addContextPts === 15
       ? `Found ${allParagraphs.length} substantial paragraphs; supporting context present.`
       : "Add 2–3 supporting paragraphs after the answer (examples, definitions, methodology).",
+    evidence: addContextEvidence,
   });
 
   // —— 3. Add Structure (15 pts)
@@ -294,77 +336,127 @@ export function analyzeAeo(html: string, url: string): AeoAnalyzeResult {
   if (headings.length > 0 && headings[0].level !== 1) headingHierarchyOk = false;
   const hasListOrTable = $("ul, ol").length >= 1 || $("table").length >= 1;
   const structureOk = headingHierarchyOk && headings.length >= 2 && hasListOrTable;
-  earnedPoints += structureOk ? 15 : 0;
+  let structureIssue: string | undefined;
+  if (!headingHierarchyOk && headings.length >= 2) {
+    for (let i = 1; i < headings.length; i++) {
+      if (headings[i].level > headings[i - 1].level + 1) {
+        structureIssue = `Skipped from H${headings[i - 1].level} to H${headings[i].level}`;
+        break;
+      }
+    }
+    if (!structureIssue && headings[0].level !== 1) structureIssue = `Starts with H${headings[0].level}, not H1`;
+  }
+  const structureEvidence: CheckEvidence = {
+    type: "headings",
+    headings,
+    issue: structureIssue,
+    hasListOrTable,
+  };
+  const structurePts = (headingHierarchyOk ? 5 : 0) + (headings.length >= 2 ? 5 : 0) + (hasListOrTable ? 5 : 0);
+  earnedPoints += structurePts;
   checks.push({
     id: "structure",
     label: "3. Add Structure to the Page",
-    pass: structureOk,
-    points: structureOk ? 15 : 0,
+    pass: structurePts === 15,
+    points: structurePts,
     maxPoints: 15,
     notes: !headingHierarchyOk
       ? "Fix heading hierarchy (H1→H2→H3, no skipped levels)."
       : !hasListOrTable
         ? "Add at least one list or table so the page is scannable."
         : "Clear heading structure and scannable content (lists/tables).",
+    evidence: structureEvidence,
   });
 
-  // —— 4. Include an FAQ (15 pts)
-  const hasFaq = faq.length >= 1;
-  const faqCountNote = hasFaq && faq.length < 5 ? " PDF recommends 5–8 questions." : "";
-  earnedPoints += hasFaq ? 15 : 0;
+  // —— 4. Include an FAQ (15 pts) — partial: 3 per item, max 15 (5 items = 15)
+  const faqPts = Math.min(15, faq.length * 3);
+  const faqCountNote = faq.length >= 1 && faq.length < 5 ? " PDF recommends 5–8 questions." : "";
+  earnedPoints += faqPts;
+  const faqEvidence: CheckEvidence = { type: "faq", items: faq };
   checks.push({
     id: "faq",
     label: "4. Include an FAQ",
-    pass: hasFaq,
-    points: hasFaq ? 15 : 0,
+    pass: faqPts === 15,
+    points: faqPts,
     maxPoints: 15,
-    notes: hasFaq ? `Found ${faq.length} Q/A(s).${faqCountNote}` : "Add a dedicated FAQ section; use natural language questions and 2–4 sentence answers; consider FAQPage schema.",
+    notes: faq.length >= 1 ? `Found ${faq.length} Q/A(s).${faqCountNote}` : "Add a dedicated FAQ section; use natural language questions and 2–4 sentence answers; consider FAQPage schema.",
+    evidence: faqEvidence,
   });
 
-  // —— 5. Original Insights (10 pts, heuristic)
-  const hasInsights = hasOriginalInsightsHeuristic($);
-  earnedPoints += hasInsights ? 10 : 0;
+  // —— 5. Original Insights (10 pts) — partial: 3 for 1 signal, 6 for 2, 10 for 3+
+  const insightsSignals = getOriginalInsightsSignals($);
+  const insightsPts = insightsSignals.length >= 3 ? 10 : insightsSignals.length === 2 ? 6 : insightsSignals.length === 1 ? 3 : 0;
+  earnedPoints += insightsPts;
+  const mainContentText = getMainContentText($);
+  const mainContentSnippet = mainContentText.slice(0, 300) + (mainContentText.length > 300 ? "…" : "");
+  const originalInsightsEvidence: CheckEvidence = {
+    type: "snippet",
+    snippet: mainContentSnippet || "(no paragraph/heading content)",
+    matched: insightsSignals.length
+      ? insightsSignals.join("; ")
+      : "none — we only look in main content (paragraphs, headings, lists) for stats, quotes, or research terms; script/code is ignored.",
+  };
   checks.push({
     id: "original-insights",
     label: "5. Include Original Insights",
-    pass: hasInsights,
-    points: hasInsights ? 10 : 0,
+    pass: insightsPts === 10,
+    points: insightsPts,
     maxPoints: 10,
-    notes: hasInsights
-      ? "Page contains stats, quotes, or research-like language (heuristic)."
-      : "Include original research, stats, or expert quotes; verify manually for best results.",
+    notes: insightsSignals.length >= 1
+      ? `Found in main content: ${insightsSignals.join(", ")}.`
+      : "Add stats, quotes, or research-like terms in your main copy (not in scripts); verify manually for best results.",
+    evidence: originalInsightsEvidence,
   });
 
-  // —— 6. Connect to Product (10 pts)
+  // —— 6. Connect to Product (10 pts) — partial: 0 if vague links; else 5 for having internal links, +5 if no vague
+  const connectProductItems = getParagraphsWithLinkCheck(allParagraphs.slice(0, 10), internalLinks);
   const hasInternalDescriptive =
     internalLinks.length >= 1 && internalLinks.every((l) => !VAGUE_LINK_PATTERNS.some((p) => p.test(l.text)));
-  const connectOk = keyLinks.length === 0 ? true : hasInternalDescriptive && vagueLinks.length === 0;
-  earnedPoints += connectOk ? 10 : 0;
+  let connectPts = 0;
+  if (vagueLinks.length > 0) connectPts = 0;
+  else if (internalLinks.length >= 1 && hasInternalDescriptive) connectPts = 10;
+  else if (internalLinks.length >= 1) connectPts = 5;
+  else if (keyLinks.length > 0) connectPts = 0;
+  else connectPts = 10;
+  const connectProductEvidence: CheckEvidence = {
+    type: "paragraphs",
+    items: connectProductItems.map((item) => ({
+      text: item.text.slice(0, 350) + (item.text.length > 350 ? "…" : ""),
+      note: item.note,
+      found: item.found,
+      highlight: item.highlight,
+    })),
+  };
+  earnedPoints += connectPts;
   checks.push({
     id: "connect-product",
     label: "6. Connect Points to the Product",
-    pass: connectOk,
-    points: connectOk ? 10 : 0,
+    pass: connectPts === 10,
+    points: connectPts,
     maxPoints: 10,
     notes: vagueLinks.length > 0
       ? `Avoid vague link text (e.g. "${vagueLinks[0]?.text ?? "click here"}"). Use descriptive internal links.`
       : internalLinks.length < 1 && keyLinks.length > 0
         ? "Add internal links with descriptive anchor text so extracted passages can reference your brand."
         : "Internal links use descriptive text; ensure key insights connect to product/brand.",
+    evidence: connectProductEvidence,
   });
 
-  // —— 7. Embed Schema Markup (15 pts)
-  const hasSchema = PDF_JSON_LD_TYPES.some((t) => jsonLdTypes.includes(t));
-  earnedPoints += hasSchema ? 15 : 0;
+  // —— 7. Embed Schema Markup (15 pts) — partial: 3 per PDF type found, max 15
+  const pdfTypesFound = jsonLdTypes.filter((t) => PDF_JSON_LD_TYPES.includes(t));
+  const schemaPts = Math.min(15, pdfTypesFound.length * 3);
+  const schemaEvidence: CheckEvidence = { type: "schema", types: jsonLdTypes };
+  earnedPoints += schemaPts;
   checks.push({
     id: "schema-markup",
     label: "7. Embed Schema Markup",
-    pass: hasSchema,
-    points: hasSchema ? 15 : 0,
+    pass: schemaPts === 15,
+    points: schemaPts,
     maxPoints: 15,
-    notes: hasSchema
+    notes: pdfTypesFound.length >= 1
       ? `Found: ${jsonLdTypes.filter((t) => PDF_JSON_LD_TYPES.includes(t)).join(", ") || "—"}.`
       : "Add JSON-LD for FAQPage, Article, HowTo, Product, Organization, or BreadcrumbList (schema.org).",
+    evidence: schemaEvidence,
   });
 
   const score = Math.round((earnedPoints / MAX_POINTS) * 100);

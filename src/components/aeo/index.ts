@@ -1,5 +1,6 @@
 export { AeoScoreCard } from "./AeoScoreCard";
 export { ChecksList } from "./ChecksList";
+export { CheckEvidenceView } from "./CheckEvidenceView";
 export { AnswerEngineView } from "./AnswerEngineView";
 export { CopyReportButton } from "./CopyReportButton";
 export { DemoSwitcher } from "./DemoSwitcher";

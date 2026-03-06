@@ -1,5 +1,31 @@
 /** AEO Scanner types — Answer Engine Optimization (not WCAG). */
 
+/** Evidence shown for a check: the content analyzed and what was found or missing. */
+export type CheckEvidence =
+  | {
+      type: "answer-first";
+      firstParagraph: string;
+      firstParagraphLength: number;
+      inRange: boolean;
+      titleLength: number;
+      titleOk: boolean;
+      metaLength: number;
+      metaOk: boolean;
+    }
+  | {
+      type: "paragraphs";
+      items: { text: string; note: string; found: boolean; highlight?: string }[];
+    }
+  | {
+      type: "headings";
+      headings: { level: number; text: string }[];
+      issue?: string;
+      hasListOrTable: boolean;
+    }
+  | { type: "faq"; items: { q: string; a: string }[] }
+  | { type: "snippet"; snippet: string; matched: string }
+  | { type: "schema"; types: string[] };
+
 export interface AeoCheck {
   id: string;
   label: string;
@@ -7,6 +33,8 @@ export interface AeoCheck {
   points: number;
   maxPoints: number;
   notes: string;
+  /** Content analyzed and what was found — for validation and highlighting in UI. */
+  evidence?: CheckEvidence;
 }
 
 export interface AeoExtracted {

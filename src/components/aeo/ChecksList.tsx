@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { AeoCheck } from "@/lib/aeo/types";
+import { CheckEvidenceView } from "./CheckEvidenceView";
 
 /** Short "Why it helps" from the PDF checklist (Answer Engine AEO). */
 const WHY_IT_HELPS: Partial<Record<string, string>> = {
@@ -70,11 +71,17 @@ export function ChecksList({ checks }: ChecksListProps) {
               </svg>
             </button>
             {isExpanded && (
-              <div className="px-4 pb-4 pt-0 pl-14 space-y-2">
+              <div className="px-4 pb-4 pt-0 pl-14 space-y-3">
                 {WHY_IT_HELPS[check.id] && (
                   <p className="text-xs text-slate-500 italic">Why it helps: {WHY_IT_HELPS[check.id]}</p>
                 )}
                 <p className="text-sm text-slate-400">{check.notes}</p>
+                {check.evidence && (
+                  <div className="mt-3 pt-3 border-t border-slate-600">
+                    <p className="text-xs font-medium text-slate-500 mb-2">Content analyzed</p>
+                    <CheckEvidenceView evidence={check.evidence} checkId={check.id} />
+                  </div>
+                )}
               </div>
             )}
           </div>

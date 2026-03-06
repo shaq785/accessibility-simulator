@@ -6,7 +6,7 @@ export function GoodDemoContent() {
         Compost is decayed organic matter—such as leaves, food scraps, and yard waste—that is used to enrich soil and improve plant growth. It is often called &ldquo;black gold&rdquo; because it adds nutrients and improves soil structure, helping gardens thrive without chemical fertilizers.
       </p>
       <p className="text-gray-700 mb-6">
-        Composting also reduces landfill waste and cuts greenhouse gas emissions. In a 2023 survey, 32% of gardeners reported better soil quality within one season. These practices help both your garden and the environment.
+        Composting also reduces landfill waste and cuts greenhouse gas emissions. In a 2023 survey, 32% of gardeners reported better soil quality within one season; one study found that 3 of 4 gardeners saw improvement. These practices help both your garden and the environment.
       </p>
 
       <h2 className="text-xl font-semibold text-gray-900 mt-8 mb-3">Benefits of Composting</h2>
@@ -34,6 +34,14 @@ export function GoodDemoContent() {
         <div>
           <dt className="font-semibold text-gray-900">Do I need a bin to compost?</dt>
           <dd className="text-gray-700 mt-1">No. You can use a simple pile, a wire bin, or a purchased compost bin. Choose based on space and how much material you have.</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-gray-900">Can I compost in winter?</dt>
+          <dd className="text-gray-700 mt-1">Yes. Decomposition slows in cold weather but doesn&rsquo;t stop. Insulate the pile with leaves or straw and turn less often.</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-gray-900">What&rsquo;s the ratio of greens to browns?</dt>
+          <dd className="text-gray-700 mt-1">Aim for roughly 1 part greens (nitrogen-rich scraps) to 2–3 parts browns (carbon-rich leaves, paper). Balance keeps the pile healthy.</dd>
         </div>
       </dl>
 

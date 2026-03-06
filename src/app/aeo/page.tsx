@@ -6,7 +6,7 @@ import {
   AeoScoreCard,
   ChecksList,
   AnswerEngineView,
-  CopyReportButton,
+  DownloadReportButton,
   DemoSwitcher,
   GoodDemoContent,
   BadDemoContent,
@@ -222,7 +222,7 @@ export default function AeoPage() {
                 <div className="lg:flex-1 lg:min-w-0 space-y-6">
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <AeoScoreCard result={result} />
-                    <CopyReportButton result={result} />
+                    <DownloadReportButton result={result} />
                   </div>
 
                   {result.suggestions.length > 0 && (

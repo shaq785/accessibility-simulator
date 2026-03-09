@@ -27,11 +27,23 @@ const SLIDES = [
 
 type SlideId = (typeof SLIDES)[number];
 
-// ─── Real websites: images in /public/career/ (paths as /career/...) ────────
+// ─── Real websites: images in /public/career/images/ ────────────────────────
 const REAL_WEBSITE_SCREENSHOTS: ScreenshotItem[] = [
-  { src: "/career/little-bites.png", label: "Little Bites" },
-  { src: "/career/thomas-muffins.png", label: "Thomas' Muffins" },
-  { src: "/career/marriott-bonvoy.png", label: "Marriott Bonvoy" },
+  {
+    src: "/career/images/muffin_logo.png",
+    label: "Little Bites",
+    url: "https://www.littlebites.com/",
+  },
+  {
+    src: "/career/images/thomas-logo.png",
+    label: "Thomas' English Muffins",
+    url: "https://thomasbreads.com/",
+  },
+  {
+    src: "/career/images/takis-logo.png",
+    label: "Takis",
+    url: "https://takis.ca/",
+  },
 ];
 
 // ─── Accessibility icon row ─────────────────────────────────────────────────
@@ -270,15 +282,7 @@ function AccessibilitySlide() {
         >
           Different Colors
         </button>
-        <button
-          type="button"
-          onClick={() => setTabHighlight(!tabHighlight)}
-          className={`px-5 py-3 rounded-2xl font-bold text-lg focus:outline-none focus:ring-4 focus:ring-amber-300 ${
-            tabHighlight ? "bg-amber-500 text-white" : "bg-slate-200 text-slate-800 hover:bg-slate-300"
-          }`}
-        >
-          No Mouse Mode
-        </button>
+        
       </div>
       <div
         className={`rounded-2xl border-4 border-amber-200 bg-white p-6 max-w-md w-full ${getLensClasses(lensState)}`}
@@ -397,12 +401,6 @@ function ClosingSlide() {
         <span role="img" aria-hidden="true">💡</span>
         <span role="img" aria-hidden="true">❤️</span>
       </p>
-      <Link
-        href="/"
-        className="text-xl font-semibold text-indigo-600 hover:text-indigo-700 underline focus:outline-none focus:ring-2 focus:ring-indigo-400 rounded px-2 py-1"
-      >
-        Back to home
-      </Link>
     </section>
   );
 }
